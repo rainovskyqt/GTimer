@@ -1,4 +1,5 @@
 #include "enums.h"
+#include "settings.h"
 
 #define ON HIGH
 #define OFF LOW
@@ -6,6 +7,7 @@
 void ICACHE_RAM_ATTR swichMode();   //Необходимо для добавления прерывания
 
 const int modeBtnPin = D8;
+Settings _settings;
 
 int _currentMode;
 
@@ -20,7 +22,7 @@ void setup() {
 }
 
 void loadLastMode(){
-  _currentMode = Mode::Single;      //TODO Сделать загрузку из flash
+  _currentMode = _settings.lastMode();
   switchModeLED();
 }
 
@@ -44,11 +46,12 @@ void setupInterrupts()    // При появлении сигнала на modeB
 void swichMode() {
   if(_currentMode < Mode::Finish){
     _currentMode++;
-
   } else {
     _currentMode = Mode::Single;
   }
+
   switchModeLED();
+  _settings.setLastMode(_currentMode);
 }
 
 void switchModeLED(){
