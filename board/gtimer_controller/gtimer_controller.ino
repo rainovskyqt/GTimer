@@ -1,62 +1,133 @@
+#include <ESP8266WiFi.h>
+// #include <ESPAsyncTCP.h>
+
 #include "enums.h"
 #include "settings.h"
+#include "printer.h"
+#include "gwifi.h"
+#include "sensor.h"
+
+#define FIRMWARE_VERSION "0.0.1"
 
 #define ON HIGH
 #define OFF LOW
 
-void ICACHE_RAM_ATTR swichMode();   //Необходимо для добавления прерывания
-
-const int modeBtnPin = D8;
 Settings _settings;
+Mode _currentMode;
 
-int _currentMode;
+GWiFi* _gWifi;
+
+const char* _ssid;
+const char* _password;
+
+IPAddress _localIP(192,168,4,1);
+IPAddress _gateway(192,168,4,1);
+IPAddress _subnet(255,255,255,0);
+int _serverPort = 8008;
+
+Sensor _distanceSensor;
+
+bool _observe = false;
+bool _started = false;
+
+unsigned long _startTime;
+unsigned long _time;
+unsigned long _syncTime;     // Используется для синхронизации стартового и финишного датчиков
+unsigned long _lastTrigged;
+int _freezTime;
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(74480);
+  delay(100);
+  Printer::printMessage("Start load...");
 
-  setPins();
-  loadLastMode();
-  
-  switchModeLED();  
-  setupInterrupts();
+  // _settings.setLastMode(Mode::Single);
+
+  loadMode();
+  loadWifiSettings();
+  setupWifi();
+  setupSensor();
+  syncTime();
+
+  _freezTime = _settings.freezTime();
+  _lastTrigged = 0;
+
+  Printer::printMessageLine("Loading complete");
 }
 
-void loadLastMode(){
+void loadMode(){
   _currentMode = _settings.lastMode();
-  switchModeLED();
+  Printer::printMessage("Current mode: ");
+  Printer::printMessageLine((String)_currentMode);
+}
+
+void loadWifiSettings(){
+  _ssid = _settings.ssid();
+  _password = _settings.password();
+  Printer::printMessage("Current ssid: ");
+  Printer::printMessageLine(_ssid);
+  Printer::printMessage("Current password: ");
+  Printer::printMessageLine(_password);
+}
+
+void setupWifi(){
+  _gWifi = new GWiFi(_localIP, _gateway, _subnet);
+  _gWifi->startWifi(_currentMode, _ssid, _password);
+}
+
+void setupSensor(){
+  _distanceSensor.start();
+  _distanceSensor.startObserv();
+  _distanceSensor.calibrate();
+  _distanceSensor.stopObserv();
+}
+
+void syncTime(){
+  if(_currentMode == Mode::Start){
+    _syncTime = millis() - millis();;
+  } else {
+    _syncTime = 0;
+  }
+}
+
+void startTimer(){
+  _startTime = millis();
+  _time = 0;
+  _started = true;
+  _lastTrigged = 0;
+
+  Printer::printMessageLine("Start timer");
+}
+
+void stopTimer(){
+  _lastTrigged = 0;
+  _started = false;
+  Printer::printMessageLine("Stop timer");
+
 }
 
 void loop() {
-
-}
-
-void setPins(){
-  for(int i = Mode::Single; i < Mode::Finish + 1; i++){
-    pinMode(ModeLED[i], OUTPUT);
-    digitalWrite(ModeLED[i], OFF);
-  }
-  pinMode(modeBtnPin, INPUT);
-}
-
-void setupInterrupts()    // При появлении сигнала на modeBtnPin вызывается функци stopParking
-{
-  attachInterrupt(digitalPinToInterrupt(modeBtnPin), swichMode, RISING);
-}
-
-void swichMode() {
-  if(_currentMode < Mode::Finish){
-    _currentMode++;
-  } else {
-    _currentMode = Mode::Single;
+    if(!_observe){
+    _distanceSensor.startObserv();
+    _observe = true;
   }
 
-  switchModeLED();
-  _settings.setLastMode(_currentMode);
-}
-
-void switchModeLED(){
-  for(int i = Mode::Single; i < Mode::Finish + 1; i++){
-    digitalWrite(ModeLED[i], OFF);
+  if(_distanceSensor.triggered()){
+    if(_lastTrigged >= _freezTime){
+      if(!_started){
+        startTimer();
+      } else {
+        stopTimer();
+      }
+    }
   }
-  digitalWrite(ModeLED[_currentMode], ON);
+
+  if(_started){
+    _time = millis() - _startTime + _syncTime;
+    Printer::printMessage("Time:");
+    Printer::printMessageLine(String(_time));
+  }
+  
+  _lastTrigged++;
+  delay(10);
 }
